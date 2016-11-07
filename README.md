@@ -1,2 +1,2 @@
 # pc-autoencoder
-Optimal binary autoencoding using pairwise correlations between encoded and decoded bits.
+Tensorflow code for optimal binary autoencoding using pairwise correlations between encoded and decoded bits.
