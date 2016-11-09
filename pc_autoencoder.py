@@ -23,7 +23,6 @@ class PCAE(object):
             tf.random_normal([self.dim_input, self.dim_hidden], dtype=tf.float32), 
             trainable=False, name='corrs_tf')
         self.sess = tf.Session()
-        self.sess.run(tf.initialize_all_variables())
         
         # Initialize data and weights.
         self.data_tf = tf.placeholder(tf.float32, [self.dim_input, None])
@@ -54,7 +53,7 @@ class PCAE(object):
         # Compute actual reconstruction loss.
         losses_tf = tf.nn.sigmoid_cross_entropy_with_logits(self.scores_tf, pm_to_zo(self.data_tf))
         self.celoss_tf = tf.reduce_mean(tf.reduce_sum(losses_tf, 0))
-        self._initialize_abbrev_U()
+        # self._initialize_abbrev_U()
         
         # Gradients for diagnostics.
         self.grads_W_tf = tf.gradients(self.mmxloss_tf, self.W_tf)
@@ -62,34 +61,6 @@ class PCAE(object):
         self.init_encs_op = tf.initialize_variables([self.encs_tf])
         # self.sess.run(tf.initialize_variables([self.encs_tf, self.abb_U_tf]))
         self.sess.run(tf.initialize_all_variables())
-    
-    def _initialize_abbrev_U(self):
-        # Attempt to abbreviate encodings as weights. 
-        wts_init_abb = np.random.randn(dim_hidden, dim_input).astype(np.float32)
-        self.abb_U_tf = tf.Variable(wts_init_abb, dtype=tf.float32)
-
-        self.abb_scores_tf = tf.matmul(self.abb_U_tf, self.data_tf)    # (H x n) matrix of logits.
-        self.abb_pots_tf = tf.add(tf.nn.softplus(self.abb_scores_tf), tf.nn.softplus(-self.abb_scores_tf))
-        abb_avg_pot_tf = tf.reduce_mean(tf.reduce_sum(self.abb_pots_tf, 0))
-        
-        # TODO figure out if this should be B_tf or B_tf_val!!
-        self.abb_tot_bias = tf.trace(tf.matmul(self.abb_U_tf, self.B_tf_val))
-        self.abb_mmxloss = tf.sub(abb_avg_pot_tf, self.abb_tot_bias)     # Loss w.r.t. constrained adversary.
-        self.abb_obj = tf.add(self.abb_mmxloss, self.L1_eps_enc*tf.reduce_sum(tf.abs(self.abb_U_tf)))
-
-        self.train_abb_U = self.abb_optimizer.minimize(self.abb_obj, var_list=[self.abb_U_tf])
-        self.abb_grad_U = tf.gradients(self.abb_obj, self.abb_U_tf)
-
-        # self.abb_scores_tf = tf.matmul(self.abb_U_tf, self.data_tf)
-        # The following step requires encs_tf to be the encodings of data_tf. To even run, they must be the same dim.
-        self.abb_losses_tf = tf.nn.sigmoid_cross_entropy_with_logits(
-            self.abb_scores_tf, pm_to_zo(self.encs_tf))
-        self.abb_celoss_tf = tf.reduce_mean(tf.reduce_sum(self.abb_losses_tf, 0))     # Loss w.r.t. optimal encodings
-        self.abb_encs_tf = 2.0*tf.sigmoid(self.abb_scores_tf) - 1.0
-        self.abb_recscores_tf = tf.matmul(self.W_tf, self.abb_encs_tf)    # (V x n) matrix of logits.
-        reclosses_abb = tf.nn.sigmoid_cross_entropy_with_logits(
-            self.abb_recscores_tf, pm_to_zo(self.data_tf))
-        self.abb_recloss_tf = tf.reduce_mean(tf.reduce_sum(reclosses_abb, 0))
 
     def encode(self, data_mbatch, iters_encode=150, display_step=50):
         num_data = data_mbatch.shape[0]
