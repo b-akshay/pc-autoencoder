@@ -120,35 +120,6 @@ class PCAE(object):
                 print step, celoss_alg, 0.5*mmxloss_alg, time.time() - inittime, grad_W_max    # np.max(np.abs(W_mat))
         return (losses_list, slacks_list, gradmaxes_W)
         
-    def encode_layer(self, data, iters=1500, encodings=None, 
-                     corrs=None, display_step=100):
-        inittime = time.time()
-        step = 0
-        plotlist = []
-        print '--Learning abbreviated encoding--'
-        if corrs is None:
-            corrs_to_use = self.corrs
-        else:
-            corrs_to_use = corrs
-        if encodings is None:
-            encodings = self.encs_tf
-        self.sess.run(self.init_encs_op)
-        for step in xrange(iters):
-            data_mb = data
-            step += 1
-            # TODO: Do NOT change or evaluate B_tf_val based on data_mb!
-            _, mmxloss_alg, ce_loss_alg, rec_loss, abb_grad_U, U_mat = self.sess.run(
-                [self.train_abb_U, self.abb_mmxloss, self.abb_celoss_tf, 
-                 self.abb_recloss_tf, self.abb_grad_U, self.abb_U_tf], 
-                feed_dict={self.data_tf: data_mb.T , self.B_tf_val: corrs_to_use, self.encs_tf: encodings})
-            U_max = np.max(np.abs(U_mat))
-            grad_U_max = np.max(np.abs(abb_grad_U[0]))
-            plotlist.append(grad_U_max)
-            if step % display_step == 0:
-                print (step, ce_loss_alg, 0.5*mmxloss_alg, rec_loss, time.time() - inittime, 
-                       grad_U_max, np.sum(np.abs(corrs_to_use)))
-        return plotlist
-        
     def decode(self, encodings):
         return self.sess.run(2.0*tf.sigmoid(self.scores_tf) - 1.0, feed_dict={self.encs_tf: encodings})
     
