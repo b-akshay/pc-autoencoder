@@ -5,86 +5,56 @@ import time
 
 class PCAE(object):
     # Note that all tensors here have number of data as their first index, not their second!
-    def __init__(self, dim_input, dim_hidden, L1_eps=0.0, L1_eps_enc=0.05, batch_size=256, 
-                 optimizer=tf.train.AdagradOptimizer(0.1), 
-                 abb_optimizer=tf.train.AdagradOptimizer(0.1), enc_binary=False):
+    def __init__(self, dim_input, dim_hidden, L1_eps=0.0, batch_size=256, 
+                 optimizer=tf.train.AdagradOptimizer(0.1), enc_binary=False):
         tf.reset_default_graph()
         self.dim_input = dim_input
         self.dim_hidden = dim_hidden
         self.batch_size = batch_size
         self.L1_eps = L1_eps
-        self.L1_eps_enc = L1_eps_enc
         self.enc_binary_tf = tf.Variable(enc_binary, name='enc_binary')
         self.alt_optimizer = optimizer
-        self.abb_optimizer = abb_optimizer
-        self.W_tf = tf.Variable(np.random.randn(self.dim_input, self.dim_hidden), 
-                                dtype=tf.float32, name='W_tf')
-        self.B_tf_val = tf.Variable(
-            tf.random_normal([self.dim_input, self.dim_hidden], dtype=tf.float32), 
-            trainable=False, name='corrs_tf')
+        self.W_tf = tf.Variable(np.random.randn(self.dim_input, self.dim_hidden), dtype=tf.float32, name='W_tf')
         self.sess = tf.Session()
         
         # Initialize data and weights.
         self.data_tf = tf.placeholder(tf.float32, [self.dim_input, None])
         self.mbatsize_tf = tf.shape(self.data_tf)[1]
-        # encs_init = np.random.randn(self.dim_hidden, self.batch_size).astype(np.float32)
-        # self.batch_size = tf.assign(self.batch_size, tf.constant(batch_size))
-        self.encs_tf = tf.Variable(tf.random_normal([dim_hidden, self.batch_size], dtype=tf.float32), 
-                                   name='encs_tf')
+        self.encs_tf = tf.Variable(tf.random_normal([dim_hidden, self.batch_size], dtype=tf.float32), name='encs_tf')
         self.projenc = tf.cond(self.enc_binary_tf, 
                                lambda: tf.assign(self.encs_tf, tf.clip_by_value(self.encs_tf, -1.0, 1.0)), 
                                lambda: tf.assign(self.encs_tf, tf.identity(self.encs_tf)))
-
         # Build computation graph of intermediate quantities.
         self.scores_tf = tf.matmul(self.W_tf, self.encs_tf)    # (V x n) matrix of logits.
         self.potentials_tf = tf.add(tf.nn.softplus(self.scores_tf), tf.nn.softplus(-self.scores_tf))    # Coordinatewise.
-        self.B_tf = tf.div(tf.matmul(self.data_tf, self.encs_tf, transpose_b=True), 
-                           tf.to_float(self.mbatsize_tf))
-        self.B_tf_val = tf.assign(self.B_tf_val, self.B_tf)
+        self.B_tf = tf.div(tf.matmul(self.data_tf, self.encs_tf, transpose_b=True), tf.to_float(self.mbatsize_tf))
         self.tot_bias_tf = tf.trace(tf.matmul(self.B_tf, self.W_tf, transpose_a=True))
         avg_pot_tf = tf.reduce_mean(tf.reduce_sum(self.potentials_tf, 0))
-        self.mmxloss_tf = tf.sub(avg_pot_tf, self.tot_bias_tf)    # Slack, unregularized (>= actual loss).
+        self.mmxloss_tf = tf.subtract(avg_pot_tf, self.tot_bias_tf)    # Slack, unregularized (>= actual loss).
         self.obj_tf = tf.add(self.mmxloss_tf, self.L1_eps*tf.reduce_sum(tf.abs(self.W_tf)))
-        
         # Optimizers for alternating minimization.
         self.train_op_E = self.alt_optimizer.minimize(self.obj_tf, var_list=[self.encs_tf])
         self.train_op_W = self.alt_optimizer.minimize(self.obj_tf, var_list=[self.W_tf])
-
         # Compute actual reconstruction loss.
-        losses_tf = tf.nn.sigmoid_cross_entropy_with_logits(self.scores_tf, pm_to_zo(self.data_tf))
+        realdata_zo = 0.5*tf.add(tf.ones(tf.shape(self.data_tf)), self.data_tf)
+        losses_tf = tf.nn.sigmoid_cross_entropy_with_logits(logits=self.scores_tf, labels=realdata_zo)
         self.celoss_tf = tf.reduce_mean(tf.reduce_sum(losses_tf, 0))
-        # self._initialize_abbrev_U()
-        
         # Gradients for diagnostics.
         self.grads_W_tf = tf.gradients(self.mmxloss_tf, self.W_tf)
         self.grads_encs = tf.gradients(self.mmxloss_tf, self.encs_tf)
-        self.init_encs_op = tf.initialize_variables([self.encs_tf])
-        # self.sess.run(tf.initialize_variables([self.encs_tf, self.abb_U_tf]))
-        self.sess.run(tf.initialize_all_variables())
+        self.sess.run(tf.global_variables_initializer())
 
     def encode(self, data_mbatch, iters_encode=150, display_step=50):
-        num_data = data_mbatch.shape[0]
+        inittime = time.time()
         slacks_list = []
         losses_list = []
-        step = 0
         print '--Encoding phase--'
-        # self.batch_size = tf.assign(self.batch_size, tf.constant(data_mbatch.shape[0]))
-        # TODO: Remove the following.
-        if num_data != self.batch_size:
-            self.encs_tf = tf.assign(self.encs_tf, 
-                                     tf.random_normal([dim_hidden, num_data], dtype=tf.float32), 
-                                     validate_shape=False)
-            print num_data, self.batch_size, self.encs_tf.get_shape()
-            self.batch_size = num_data
-        # self.sess.run(self.init_encs_op)
         for step in xrange(iters_encode):
             step += 1
             _, _, celoss_alg, mmxloss_alg, corrs, encodings, grad_E = self.sess.run(
                 [self.projenc, self.train_op_E, self.celoss_tf, self.mmxloss_tf, 
                  self.B_tf, self.encs_tf, self.grads_encs], 
                 feed_dict={self.data_tf: data_mbatch.T})
-
-            self.sess.run(self.B_tf_val, feed_dict={self.data_tf: data_mbatch.T})
             grad_E_max = np.max(np.abs(grad_E[0]))
             losses_list.append(celoss_alg)
             slacks_list.append(0.5*mmxloss_alg)
@@ -96,7 +66,6 @@ class PCAE(object):
     
     def decode_fit(self, data_mbatch, encodings=None, iters_decode=350, display_step=50):
         inittime = time.time()
-        step = 0
         grad_W_max = 10.0
         gradmaxes_W = []
         slacks_list = []
@@ -122,12 +91,6 @@ class PCAE(object):
         
     def decode(self, encodings):
         return self.sess.run(2.0*tf.sigmoid(self.scores_tf) - 1.0, feed_dict={self.encs_tf: encodings})
-    
-    def encode_dataset(self, data, iters_perbatch=150):
-        raise NotImplementedError
-        
-    def encode_abbrev(self, data):
-        return self.sess.run(2.0*tf.sigmoid(self.abb_scores_tf) - 1.0, feed_dict={self.data_tf: data.T})
 
     def get_weights(self):
         return self.sess.run(self.W_tf)
@@ -140,45 +103,24 @@ class PCAE(object):
         corrs, data, encs = self.sess.run(
             [self.B_tf, self.data_tf, self.encs_tf], feed_dict={self.data_tf: data_mbatch.T})
         return corrs, data, encs
-    
-    def set_corrs(self, B_mat):
-        self.sess.run(tf.assign(self.B_tf_val, B_mat))
 
 
-# Some utility functions
-def zo_to_pm (data):
-    return 2.0*data - 1.0
-
-def pm_to_zo (data):
-    return 0.5*(1.0 + data)
-
-def samp_batch_from_data(data, batch_size):
-    return data[np.random.choice(data.shape[0], batch_size, replace=False)]
-
-def binarize_stoch(dataset):
-    # Assuming dataset is in [0,1], draws Bernoullis accordingly and outputs a binary version.
-    return np.random.binomial(1, dataset, dataset.shape)
-
-
+"""
+Example usage below: autoencoding MNIST.
+"""
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-    # %matplotlib inline
     import scipy.io
-
     from keras.datasets import mnist
     (x_train, y_train), (x_test, y_test) = mnist.load_data()
-    digits_train_all = x_train.reshape((len(x_train), np.prod(x_train.shape[1:])))
-    digits_test_all = x_test.reshape((len(x_test), np.prod(x_test.shape[1:])))
-    # print digits_train_all.shape, digits_test_all.shape
-    digits_train_all = digits_train_all.astype('float32') / 255.
-    digits_test_all = digits_test_all.astype('float32') / 255.
+    digits_train_all = x_train.reshape((len(x_train), np.prod(x_train.shape[1:]))).astype('float32') / 255.
+    digits_test_all = x_test.reshape((len(x_test), np.prod(x_test.shape[1:]))).astype('float32') / 255.
     train_size = digits_train_all.shape[0]
     test_size = digits_test_all.shape[0]
     digits_train = digits_train_all[0:train_size, :]
     digits_test = digits_test_all[0:test_size, :]
     data_train = zo_to_pm(binarize_stoch(digits_train))     # Binarize stochastically
     data_test = zo_to_pm(binarize_stoch(digits_test))
-    # data_test = np.random.permutation(data_test)
+    data_test = np.random.permutation(data_test) # Shuffle test data
 
     # Initialize autoencoder
     dim_hidden = 100
@@ -189,9 +131,6 @@ if __name__ == "__main__":
     pc_ae = PCAE(dim_input, dim_hidden, enc_binary=enc_binary, batch_size=batch_size, L1_eps=L1_eps, 
                  optimizer=tf.train.AdagradOptimizer(0.3))
     num_epochs = 60
-    # iters_encode = 1000
-    # iters_decode = 1500
-
     losses_list = []
     slacks_list = []
     max_W_list = []
