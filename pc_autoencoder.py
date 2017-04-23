@@ -4,7 +4,6 @@ import time
 
 
 class PCAE(object):
-    # Note that all tensors here have number of data as their first index, not their second!
     def __init__(self, dim_input, dim_hidden, L1_eps=0.0, batch_size=256, 
                  optimizer=tf.train.AdagradOptimizer(0.1), enc_binary=False):
         tf.reset_default_graph()
@@ -153,7 +152,6 @@ if __name__ == "__main__":
     encs_list = []
     corrs_list = []
     celosses = []
-    batch_size = 250
     inittime = time.time()
     for step in xrange(test_size / batch_size):
         print '-- Epoch %02d --' % (step + 1)
