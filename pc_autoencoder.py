@@ -104,6 +104,12 @@ class PCAE(object):
         return corrs, data, encs
 
 
+def zo_to_pm (data):
+    return 2.0*data - 1.0
+def binarize_stoch(dataset):
+    # Assuming dataset is in [0,1], draws Bernoullis accordingly and outputs a binary version.
+    return np.random.binomial(1, dataset, dataset.shape)
+
 """
 Example usage below: autoencoding MNIST.
 """
@@ -119,7 +125,8 @@ if __name__ == "__main__":
     digits_test = digits_test_all[0:test_size, :]
     data_train = zo_to_pm(binarize_stoch(digits_train))     # Binarize stochastically
     data_test = zo_to_pm(binarize_stoch(digits_test))
-    data_test = np.random.permutation(data_test) # Shuffle test data
+    data_test = np.random.permutation(data_test)    # Shuffle test data
+    dim_input = data_train.shape[1]
 
     # Initialize autoencoder
     dim_hidden = 100
@@ -135,7 +142,7 @@ if __name__ == "__main__":
     max_W_list = []
     inittime = time.time()
     for epoch_ctr in range(num_epochs):
-        data_mbatch = samp_batch_from_data(data_train, batch_size)
+        data_mbatch = data_train[np.random.choice(data_train.shape[0], batch_size, replace=False)]
         print 'Epoch: \t ' + str(epoch_ctr)
         # Train more accurately as we get closer to the optimum and W, B get better. This works fine but other settings work too.
         iters_encode = 35*(epoch_ctr + 1)
